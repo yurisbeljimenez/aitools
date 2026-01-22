@@ -75,31 +75,25 @@ def setup_venv(tool_dir: Path, progress: Progress, task: TaskID) -> Path:
 
     return python_exe
 
-def patch_shebang(main_py: Path, python_exe: Path):
-    """Replace generic shebang with absolute path to venv python."""
-    content = main_py.read_text()
-    old_shebang = "#!/usr/bin/env python3"
-    new_shebang = f"#!{python_exe}"
-    if old_shebang in content:
-        content = content.replace(old_shebang, new_shebang)
-        main_py.write_text(content)
-        console.print(f"🔧 Patched shebang in {main_py}")
-
-def create_symlink(tool_name: str, main_py: Path):
-    """Create symlink in /usr/local/bin."""
-    symlink_path = Path("/usr/local/bin") / tool_name
+def create_wrapper_script(tool_name: str, main_py: Path, python_exe: Path):
+    """Create a wrapper script that runs the tool with its venv python."""
+    script_path = Path("/usr/local/bin") / tool_name
 
     # Check if we can write to /usr/local/bin
     if not os.access("/usr/local/bin", os.W_OK):
         raise PermissionError(f"No write permission for /usr/local/bin. Run installer with sudo.")
 
-    # Remove existing symlink
-    if symlink_path.exists():
-        symlink_path.unlink()
+    # Remove existing script/symlink
+    if script_path.exists():
+        script_path.unlink()
 
-    # Create new symlink
-    symlink_path.symlink_to(main_py)
-    console.print(f"🔗 Created symlink: {symlink_path} -> {main_py}")
+    # Create wrapper script
+    wrapper_content = f"""#!/bin/bash
+exec "{python_exe}" "{main_py}" "$@"
+"""
+    script_path.write_text(wrapper_content)
+    script_path.chmod(0o755)
+    console.print(f"🔗 Created wrapper script: {script_path}")
 
 def main():
     console.print(Panel.fit("🚀 [bold blue]AI Tools Universal Installer[/bold blue]\nSetting up isolated environments for all tools", style="blue"))
@@ -122,27 +116,17 @@ def main():
         overall_task = progress.add_task("Overall Progress", total=len(tools))
 
         for tool_dir in tools:
-            tool_task = progress.add_task(f"Setting up {tool_dir.name}", total=4)
+            tool_task = progress.add_task(f"Setting up {tool_dir.name}", total=2)
 
             try:
                 # 1. Setup venv
                 python_exe = setup_venv(tool_dir, progress, tool_task)
                 progress.update(tool_task, advance=1)
 
-                # 2. Patch shebang
-                progress.update(tool_task, description=f"🔧 Patching shebang for {tool_dir.name}...")
+                # 2. Create wrapper script
+                progress.update(task, description=f"🔧 Creating wrapper script for {tool_dir.name}...")
                 main_py = tool_dir / "main.py"
-                patch_shebang(main_py, python_exe)
-                progress.update(tool_task, advance=1)
-
-                # 3. Make executable
-                progress.update(tool_task, description=f"⚙️  Making {tool_dir.name} executable...")
-                main_py.chmod(0o755)
-                progress.update(tool_task, advance=1)
-
-                # 4. Create symlink
-                progress.update(tool_task, description=f"🔗 Creating symlink for {tool_dir.name}...")
-                create_symlink(tool_dir.name, main_py)
+                create_wrapper_script(tool_dir.name, main_py, python_exe)
                 progress.update(tool_task, advance=1)
 
                 console.print(f"[green]✅ {tool_dir.name} setup complete![/green]")
