@@ -35,10 +35,25 @@ def get_tool_dirs() -> list[Path]:
     return sorted(tools)
 
 def setup_venv(tool_dir: Path, progress: Progress, task: TaskID) -> Path:
-    """Create or recreate venv for a tool."""
+    """Create or reuse venv for a tool."""
     venv_dir = tool_dir / "venv"
+    python_exe = venv_dir / "bin" / "python"
+    requirements_file = tool_dir / "requirements.txt"
 
-    # Remove old venv
+    # Check if venv exists and is functional
+    if venv_dir.exists() and python_exe.exists():
+        try:
+            # Test if python works
+            run_command([str(python_exe), "--version"], cwd=tool_dir)
+            # Check if key packages are installed (check typer as proxy)
+            result = run_command([str(python_exe), "-c", "import typer"], cwd=tool_dir, check=False)
+            if result.returncode == 0:
+                progress.update(task, description=f"✅ Reusing existing venv for {tool_dir.name}...")
+                return python_exe
+        except:
+            pass  # Fall through to recreation
+
+    # Remove broken/old venv
     if venv_dir.exists():
         progress.update(task, description=f"🗑️  Removing old venv for {tool_dir.name}...")
         shutil.rmtree(venv_dir)
@@ -47,8 +62,6 @@ def setup_venv(tool_dir: Path, progress: Progress, task: TaskID) -> Path:
     progress.update(task, description=f"🐍 Creating venv for {tool_dir.name}...")
     run_command([sys.executable, "-m", "venv", str(venv_dir)], cwd=tool_dir)
 
-    # Get python executable path
-    python_exe = venv_dir / "bin" / "python"
     if not python_exe.exists():
         raise FileNotFoundError(f"Python executable not found in {venv_dir}")
 
@@ -58,7 +71,6 @@ def setup_venv(tool_dir: Path, progress: Progress, task: TaskID) -> Path:
 
     # Install requirements
     progress.update(task, description=f"📦 Installing deps for {tool_dir.name}...")
-    requirements_file = tool_dir / "requirements.txt"
     run_command([str(python_exe), "-m", "pip", "install", "-r", str(requirements_file)], cwd=tool_dir)
 
     return python_exe
