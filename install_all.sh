@@ -1,120 +1,143 @@
 #!/usr/bin/env python3
+"""
+Universal AI Tools Installer
+Scans tool directories, sets up isolated venvs, installs dependencies,
+patches shebangs, and creates global symlinks.
+"""
 import os
 import sys
-import re
-import typer
+import subprocess
+import shutil
 from pathlib import Path
-from datetime import datetime
 from rich.console import Console
 from rich.panel import Panel
-import yt_dlp
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskID
+from rich.text import Text
 
-# Define the app
-app = typer.Typer(help="Copycat: Social Media Ingestor for AI Reference", no_args_is_help=True)
 console = Console()
 
-def sanitize_filename(name: str, max_len: int = 50) -> str:
-    """Sanitizes the uploader name for the filesystem."""
-    # Replace non-alphanumeric with underscore
-    clean = re.sub(r'[^a-zA-Z0-9]', '_', name)
-    # Remove repeated underscores
-    clean = re.sub(r'_+', '_', clean)
-    # Remove trailing underscore
-    clean = clean.strip('_')
-    return clean[:max_len]
-
-@app.command()
-def ingest(
-    url: str = typer.Argument(..., help="Video URL (YouTube, TikTok, Instagram, etc)"),
-    output: Path = typer.Option(None, "--output", "-o", help="Target folder (Defaults to current dir)"),
-    browser: str = typer.Option("chrome", "--browser", "-b", help="Browser to steal cookies from"),
-    write_meta: bool = typer.Option(True, help="Generate Markdown metadata file"),
-):
-    """
-    Download video reference and generate AI-ready metadata.
-    """
-    # 1. Determine Output Directory
-    # If no output specified, use the Current Working Directory (where the user is standing)
-    if output is None:
-        target_dir = Path.cwd()
-    else:
-        target_dir = output.resolve()
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%m%d%Y-%H%M%S")
-    
-    console.print(Panel(f"🐱 [bold purple]Copycat Ingest[/bold purple]\nURL: [dim]{url}[/dim]\nDest: [blue]{target_dir}[/blue]", style="purple"))
-
-    # 2. Configure yt-dlp
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'merge_output_format': 'mp4',
-        'cookiesfrombrowser': (browser, None, None, None), # Tuple format required by lib
-        'quiet': True,
-        'no_warnings': True,
-        'outtmpl': f'{target_dir}/temp_{timestamp}.%(ext)s', # Temp name
-        'restrictfilenames': True,
-    }
-
+def run_command(cmd: list, cwd: Path = None, check: bool = True) -> subprocess.CompletedProcess:
+    """Run a command and return the result."""
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # 3. Extract Info (Fast)
-            with console.status("[bold purple]🔍 Fetching metadata...[/bold purple]"):
-                info = ydl.extract_info(url, download=False)
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=check)
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Command failed: {' '.join(cmd)}[/red]")
+        console.print(f"[red]Error: {e.stderr}[/red]")
+        raise
 
-            # 4. Construct Final Filename
-            # Logic: TIMESTAMP_UPLOADER.mp4
-            raw_uploader = info.get('uploader', 'unknown_user')
-            clean_uploader = sanitize_filename(raw_uploader)
-            
-            final_filename = f"{timestamp}_{clean_uploader}.mp4"
-            final_path = target_dir / final_filename
-            meta_path = target_dir / f"{timestamp}_{clean_uploader}_meta.md"
+def get_tool_dirs() -> list[Path]:
+    """Find all tool directories (those with main.py and requirements.txt)."""
+    current_dir = Path.cwd()
+    tools = []
+    for item in current_dir.iterdir():
+        if item.is_dir() and (item / "main.py").exists() and (item / "requirements.txt").exists():
+            tools.append(item)
+    return sorted(tools)
 
-            # Update the download path to the final name
-            ydl.params['outtmpl']['default'] = str(final_path)
+def setup_venv(tool_dir: Path, progress: Progress, task: TaskID) -> Path:
+    """Create or recreate venv for a tool."""
+    venv_dir = tool_dir / "venv"
 
-            # 5. Download
-            console.print(f"[cyan]⬇️  Downloading: {final_filename}[/cyan]")
-            ydl.download([url])
-            
-            # 6. Generate Markdown Metadata
-            if write_meta:
-                description = info.get('description', '')
-                # Indent description for blockquote formatting
-                desc_formatted = "\n> ".join(description.splitlines()) if description else "No description."
+    # Remove old venv
+    if venv_dir.exists():
+        progress.update(task, description=f"🗑️  Removing old venv for {tool_dir.name}...")
+        shutil.rmtree(venv_dir)
 
-                # We construct the Markdown string carefully
-                md_content = (
-                    f"# Video Metadata\n"
-                    f"- **Source URL:** {url}\n"
-                    f"- **Ingest Date:** {datetime.now()}\n"
-                    f"- **Local Path:** {final_path}\n\n"
-                    f"## Details\n"
-                    f"```text\n"
-                    f"Title: {info.get('title', 'N/A')}\n"
-                    f"Uploader: {info.get('uploader', 'N/A')}\n"
-                    f"Upload Date: {info.get('upload_date', 'N/A')}\n"
-                    f"Duration: {info.get('duration_string', 'N/A')}\n"
-                    f"Resolution: {info.get('width', 0)}x{info.get('height', 0)}\n"
-                    f"```\n\n"
-                    f"## Description\n"
-                    f"> {desc_formatted}\n"
-                )
-                
-                meta_path.write_text(md_content, encoding='utf-8')
-                console.print(f"[green]📝 Metadata saved: {meta_path.name}[/green]")
+    # Create new venv
+    progress.update(task, description=f"🐍 Creating venv for {tool_dir.name}...")
+    run_command([sys.executable, "-m", "venv", str(venv_dir)], cwd=tool_dir)
 
-            console.print(f"[bold green]✅ Copycat finished successfully.[/bold green]")
+    # Get python executable path
+    python_exe = venv_dir / "bin" / "python"
+    if not python_exe.exists():
+        raise FileNotFoundError(f"Python executable not found in {venv_dir}")
 
-    except yt_dlp.utils.DownloadError as e:
-        console.print(f"[bold red]❌ Download Error:[/bold red] {e}")
-        if "cookie" in str(e).lower() or "sign in" in str(e).lower():
-            console.print("[yellow]💡 Hint: Try changing browser with --browser firefox[/yellow]")
+    # Upgrade pip
+    progress.update(task, description=f"⬆️  Upgrading pip for {tool_dir.name}...")
+    run_command([str(python_exe), "-m", "pip", "install", "--upgrade", "pip"], cwd=tool_dir)
+
+    # Install requirements
+    progress.update(task, description=f"📦 Installing deps for {tool_dir.name}...")
+    requirements_file = tool_dir / "requirements.txt"
+    run_command([str(python_exe), "-m", "pip", "install", "-r", str(requirements_file)], cwd=tool_dir)
+
+    return python_exe
+
+def patch_shebang(main_py: Path, python_exe: Path):
+    """Replace generic shebang with absolute path to venv python."""
+    content = main_py.read_text()
+    old_shebang = "#!/usr/bin/env python3"
+    new_shebang = f"#!/usr/bin/env {python_exe}"
+    if old_shebang in content:
+        content = content.replace(old_shebang, new_shebang)
+        main_py.write_text(content)
+        console.print(f"🔧 Patched shebang in {main_py}")
+
+def create_symlink(tool_name: str, main_py: Path):
+    """Create symlink in /usr/local/bin."""
+    symlink_path = Path("/usr/local/bin") / tool_name
+
+    # Remove existing symlink
+    if symlink_path.exists():
+        symlink_path.unlink()
+
+    # Create new symlink
+    symlink_path.symlink_to(main_py)
+    console.print(f"🔗 Created symlink: {symlink_path} -> {main_py}")
+
+def main():
+    console.print(Panel.fit("🚀 [bold blue]AI Tools Universal Installer[/bold blue]\nSetting up isolated environments for all tools", style="blue"))
+
+    tools = get_tool_dirs()
+    if not tools:
+        console.print("[red]❌ No tool directories found![/red]")
         sys.exit(1)
-    except Exception as e:
-        console.print(f"[bold red]❌ Unexpected Error:[/bold red] {e}")
-        sys.exit(1)
+
+    console.print(f"📂 Found {len(tools)} tools: {', '.join(t.name for t in tools)}")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console,
+    ) as progress:
+
+        overall_task = progress.add_task("Overall Progress", total=len(tools))
+
+        for tool_dir in tools:
+            tool_task = progress.add_task(f"Setting up {tool_dir.name}", total=4)
+
+            try:
+                # 1. Setup venv
+                python_exe = setup_venv(tool_dir, progress, tool_task)
+                progress.update(tool_task, advance=1)
+
+                # 2. Patch shebang
+                progress.update(tool_task, description=f"🔧 Patching shebang for {tool_dir.name}...")
+                main_py = tool_dir / "main.py"
+                patch_shebang(main_py, python_exe)
+                progress.update(tool_task, advance=1)
+
+                # 3. Make executable
+                progress.update(tool_task, description=f"⚙️  Making {tool_dir.name} executable...")
+                main_py.chmod(0o755)
+                progress.update(tool_task, advance=1)
+
+                # 4. Create symlink
+                progress.update(tool_task, description=f"🔗 Creating symlink for {tool_dir.name}...")
+                create_symlink(tool_dir.name, main_py)
+                progress.update(tool_task, advance=1)
+
+                console.print(f"[green]✅ {tool_dir.name} setup complete![/green]")
+
+            except Exception as e:
+                console.print(f"[red]❌ Failed to setup {tool_dir.name}: {e}[/red]")
+                continue
+
+            progress.update(overall_task, advance=1)
+
+    console.print(Panel.fit("🎉 [bold green]Installation Complete![/bold green]\nAll tools are now available globally.\nRun 'tool_name --help' to get started.", style="green"))
 
 if __name__ == "__main__":
-    app()
+    main()
