@@ -91,7 +91,7 @@ def start(
                 if check:
                     # Verify it's us
                     if "node" in check.name() or "next" in check.name():
-                        console.print(f"[green]✅ Ready! Dashboard: https://tensor.yurisbel.com[/green]")
+                        console.print(f"[green]✅ Ready! Dashboard: http://localhost:{PORT}[/green]")
                         return
                     else:
                         console.print(f"[red]❌ Error: Port hijacked by {check.name()}![/red]")
@@ -165,7 +165,7 @@ def status():
     if proc:
         name = proc.name()
         if "node" in name or "next" in name:
-            console.print(Panel(f"✅ [bold green]RUNNING[/bold green]\nPID: {proc.pid}\nApp: Ostris AI-Toolkit\nURL: https://tensor.yurisbel.com", title="Ostris Status"))
+            console.print(Panel(f"✅ [bold green]RUNNING[/bold green]\nPID: {proc.pid}\nApp: Ostris AI-Toolkit\nURL: http://localhost:{PORT}", title="Ostris Status"))
         else:
             console.print(Panel(f"🛑 [bold red]BLOCKED[/bold red]\nPID: {proc.pid}\nApp: [yellow]{name} (ComfyUI?)[/yellow]\nPort {PORT} is busy.", title="Ostris Status"))
     else:
