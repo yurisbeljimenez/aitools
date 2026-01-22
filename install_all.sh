@@ -77,6 +77,10 @@ def create_symlink(tool_name: str, main_py: Path):
     """Create symlink in /usr/local/bin."""
     symlink_path = Path("/usr/local/bin") / tool_name
 
+    # Check if we can write to /usr/local/bin
+    if not os.access("/usr/local/bin", os.W_OK):
+        raise PermissionError(f"No write permission for /usr/local/bin. Run installer with sudo.")
+
     # Remove existing symlink
     if symlink_path.exists():
         symlink_path.unlink()
