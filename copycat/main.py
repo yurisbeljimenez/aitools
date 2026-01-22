@@ -68,6 +68,9 @@ def ingest(
             'no_warnings': True,
             'outtmpl': str(final_path),
             'restrictfilenames': True,
+            'ignoreerrors': True,
+            'age_limit': 0,
+            'geo_bypass': True,
         }
 
         # 4. Download with correct filename
