@@ -63,7 +63,7 @@ setup_python_tool() {
 
 # --- REGISTER YOUR TOOLS HERE ---
 setup_python_tool "hugin"
-# setup_python_tool "aicap" 
+setup_python_tool "aicap" 
 # setup_python_tool "ostris"
 
 echo "------------------------------------------------"
