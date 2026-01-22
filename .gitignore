@@ -1,0 +1,13 @@
+# Ignore Virtual Environments
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Ignore System Files
+.DS_Store
+.vscode/
+
+# Ignore local datasets or heavy outputs inside tools
+*/output/
+*/downloads/
