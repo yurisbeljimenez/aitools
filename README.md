@@ -1,6 +1,3 @@
-Here is the raw source code for your `README.md`. You can copy this entire block directly into the file.
-
-````markdown
 # 🧰 AI Tools Monorepo
 
 **A portable, user-agnostic collection of professional-grade AI CLI utilities.**
@@ -50,14 +47,13 @@ This repository is designed to be cloned anywhere. The `install_all.sh` script h
 
 ```bash
 # 1. Clone the repo
-git clone [https://github.com/YOUR_USERNAME/ai-tools.git](https://github.com/YOUR_USERNAME/ai-tools.git) ~/ai/tools
+git clone https://github.com/yurisbeljimenez/aitools.git ~/ai/tools
 
 # 2. Run the Universal Installer
 cd ~/ai/tools
 chmod +x install_all.sh
 ./install_all.sh
 ```
-````
 
 **What the installer does:**
 
@@ -140,13 +136,8 @@ chmod +x install_all.sh
 │   └── requirements.txt    # Dependencies (psutil)
 ├── ostris/
 │   ├── main.py
-│   └── requirements.txt    # Dependencies (psutil)
+│   └── requirements.py     # Dependencies (psutil)
 └── copycat/
     ├── main.py
     └── requirements.txt    # Dependencies (yt-dlp)
-
-```
-
-```
-
 ```
