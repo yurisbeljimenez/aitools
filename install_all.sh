@@ -124,7 +124,7 @@ def main():
                 progress.update(tool_task, advance=1)
 
                 # 2. Create wrapper script
-                progress.update(task, description=f"🔧 Creating wrapper script for {tool_dir.name}...")
+                progress.update(tool_task, description=f"🔧 Creating wrapper script for {tool_dir.name}...")
                 main_py = tool_dir / "main.py"
                 create_wrapper_script(tool_dir.name, main_py, python_exe)
                 progress.update(tool_task, advance=1)
