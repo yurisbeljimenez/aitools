@@ -14,6 +14,10 @@ import yt_dlp
 app = typer.Typer(help="Copycat: Social Media Ingestor for AI Reference", no_args_is_help=True)
 console = Console()
 
+# Get the yt-dlp executable from the same venv
+venv_bin = Path(sys.executable).parent
+yt_dlp_exe = venv_bin / 'yt-dlp'
+
 def sanitize_filename(name: str, max_len: int = 50) -> str:
     """Replicates your sed 's/[^a-zA-Z0-9]/_/g' logic."""
     # Replace non-alphanumeric with underscore
@@ -42,41 +46,61 @@ def ingest(
     console.print(Panel(f"🐱 [bold purple]Copycat Ingest[/bold purple]\nURL: [dim]{url}[/dim]\nDest: [blue]{output}[/blue]", style="purple"))
 
     try:
-        # 1. Extract Info First (Lightweight) with minimal options
-        temp_opts = {
-            'quiet': True,
-            'no_warnings': True,
-        }
-        with yt_dlp.YoutubeDL(temp_opts) as temp_ydl:
-            with console.status("[bold purple]🔍 Fetching metadata...[/bold purple]"):
-                info = temp_ydl.extract_info(url, download=False)
+        # 1. Get uploader (like the bash script)
+        with console.status("[bold purple]🔍 Fetching metadata...[/bold purple]"):
+            uploader_result = subprocess.run([
+                str(yt_dlp_exe), '--print', 'uploader', '--ignore-errors',
+                '--no-warnings', '--age-limit', '0', '--geo-bypass', url
+            ], capture_output=True, text=True)
 
-        # 2. Construct Custom Filename (Your Logic)
-        raw_uploader = info.get('uploader', 'unknown_user')
+            if uploader_result.returncode == 0 and uploader_result.stdout.strip():
+                raw_uploader = uploader_result.stdout.strip().split('\n')[0]
+            else:
+                raw_uploader = 'unknown_user'
+
+        # 2. Construct Custom Filename
         clean_uploader = sanitize_filename(raw_uploader)
-
         final_filename = f"{timestamp}_{clean_uploader}.mp4"
         final_path = output / final_filename
         meta_path = output / f"{timestamp}_{clean_uploader}_meta.md"
 
-        # 3. Configure yt-dlp with correct output template
-        download_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'merge_output_format': 'mp4',
-            'cookiesfrombrowser': (browser, None, None, None),
-            'quiet': True,
-            'no_warnings': True,
-            'outtmpl': str(final_path),
-            'restrictfilenames': True,
-            'ignoreerrors': True,
-            'age_limit': 0,
-            'geo_bypass': True,
-        }
-
-        # 4. Download with correct filename
+        # 3. Download
         console.print(f"[cyan]⬇️  Downloading: {final_filename}[/cyan]")
-        with yt_dlp.YoutubeDL(download_opts) as ydl:
-            ydl.download([url])
+        download_result = subprocess.run([
+            str(yt_dlp_exe),
+            '--cookies-from-browser', browser,
+            '--ignore-errors',
+            '--no-warnings',
+            '--progress',
+            '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            '--merge-output-format', 'mp4',
+            '-o', str(final_path),
+            '--restrict-filenames',
+            '--age-limit', '0',
+            '--geo-bypass',
+            url
+        ], capture_output=True, text=True)
+
+        if download_result.returncode != 0:
+            console.print(f"[bold red]❌ Download failed:[/bold red] {download_result.stderr}")
+            sys.exit(1)
+
+        if not final_path.exists():
+            console.print("[bold red]❌ Download failed: File not created[/bold red]")
+            sys.exit(1)
+
+        # 4. Get metadata for markdown
+        info = {}
+        meta_fields = ['title', 'uploader', 'upload_date', 'duration_string', 'description']
+        for field in meta_fields:
+            if field == 'description':
+                result = subprocess.run([str(yt_dlp_exe), '--get-description', '--ignore-errors', '--no-warnings', url],
+                                      capture_output=True, text=True)
+                info[field] = result.stdout.strip() if result.returncode == 0 else ''
+            else:
+                result = subprocess.run([str(yt_dlp_exe), '--print', f'%({field})s', '--ignore-errors', '--no-warnings', url],
+                                      capture_output=True, text=True)
+                info[field] = result.stdout.strip() if result.returncode == 0 else 'N/A'
 
         # 5. Generate Markdown
         if write_meta:
@@ -107,11 +131,6 @@ Resolution: {info.get('width', 0)}x{info.get('height', 0)}
 
         console.print(f"[bold green]✅ Copycat finished successfully.[/bold green]")
 
-    except yt_dlp.utils.DownloadError as e:
-        console.print(f"[bold red]❌ Download Error:[/bold red] {e}")
-        if "cookie" in str(e).lower() or "sign in" in str(e).lower():
-            console.print("[yellow]💡 Hint: Try changing browser with --browser firefox[/yellow]")
-        sys.exit(1)
     except Exception as e:
         console.print(f"[bold red]❌ Unexpected Error:[/bold red] {e}")
         sys.exit(1)
