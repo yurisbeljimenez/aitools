@@ -67,7 +67,7 @@ def patch_shebang(main_py: Path, python_exe: Path):
     """Replace generic shebang with absolute path to venv python."""
     content = main_py.read_text()
     old_shebang = "#!/usr/bin/env python3"
-    new_shebang = f"#!/usr/bin/env {python_exe}"
+    new_shebang = f"#!{python_exe}"
     if old_shebang in content:
         content = content.replace(old_shebang, new_shebang)
         main_py.write_text(content)
