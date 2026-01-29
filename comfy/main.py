@@ -33,9 +33,9 @@ def get_running_pid():
     return None
 
 def is_port_busy(port: int) -> bool:
-    """Checks if a port is currently occupied."""
+    """Checks if a port is currently occupied by a listening server."""
     for conn in psutil.net_connections():
-        if conn.laddr.port == port:
+        if conn.laddr.port == port and conn.status == 'LISTEN':
             return True
     return False
 
