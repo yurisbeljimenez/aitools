@@ -10,12 +10,12 @@ from huggingface_hub import scan_cache_dir, snapshot_download, HfApi
 
 # --- TUI IMPORTS ---
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, DataTable, Static
+from textual.widgets import Header, Footer, DataTable, Static, Input
 from textual.containers import Vertical
 from textual.binding import Binding
 
 # --- CONFIGURATION ---
-# Force Rust-based downloader for maximum throughput on your Gen5 SSD
+# Optimized for your hardware (AMD Ryzen 9 9950X3D + Gen5 SSD)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 app = typer.Typer(
@@ -25,7 +25,7 @@ app = typer.Typer(
 )
 console = Console()
 
-# --- UTILITIES ---
+# --- SHARED UTILITIES ---
 def get_size_str(size_in_bytes: int) -> str:
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size_in_bytes < 1024:
@@ -35,7 +35,7 @@ def get_size_str(size_in_bytes: int) -> str:
 
 # --- TUI COMPONENT ---
 class HuginUI(App):
-    """The interactive dashboard for Hugin."""
+    """Interactive TUI dashboard for browsing, searching, and nuking models."""
     CSS = """
     Screen { background: #1a1b26; }
     #stats-panel {
@@ -45,17 +45,22 @@ class HuginUI(App):
         padding: 1 2;
         border-bottom: solid #414868;
     }
+    Input { margin: 1 2; border: tall #414868; background: #24283b; }
+    Input:focus { border: tall #7aa2f7; }
     DataTable { height: 1fr; border: none; }
     """
+    
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
         Binding("d", "delete_model", "Nuke Selected"),
+        Binding("slash", "focus_search", "Search"),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical():
+            yield Input(placeholder="Search models... (Press '/' to focus)", id="search-input")
             yield Static("Scanning Cache...", id="stats-panel")
             yield DataTable(zebra_stripes=True)
         yield Footer()
@@ -66,14 +71,23 @@ class HuginUI(App):
         table.cursor_type = "row"
         self.refresh_cache()
 
-    def refresh_cache(self) -> None:
-        hf_cache = scan_cache_dir()
+    def refresh_cache(self, filter_text: str = "") -> None:
+        try:
+            hf_cache = scan_cache_dir()
+        except Exception:
+            return
+
         table = self.query_one(DataTable)
         stats = self.query_one("#stats-panel")
         table.clear()
         
         repos = sorted(hf_cache.repos, key=lambda r: r.size_on_disk, reverse=True)
+        
+        display_count = 0
         for repo in repos:
+            if filter_text and filter_text.lower() not in repo.repo_id.lower():
+                continue
+            
             refs = [ref for rev in repo.revisions for ref in rev.refs]
             table.add_row(
                 repo.repo_id,
@@ -82,30 +96,41 @@ class HuginUI(App):
                 ", ".join(refs[:2]) if refs else "detached",
                 key=repo.repo_id
             )
-        stats.update(f"Total Cache: {get_size_str(hf_cache.size_on_disk)} | {len(repos)} Repos")
+            display_count += 1
+            
+        stats.update(f"Total Cache: {get_size_str(hf_cache.size_on_disk)} | Showing {display_count}/{len(repos)} Repos")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self.refresh_cache(event.value)
+
+    def action_focus_search(self) -> None:
+        self.query_one("#search-input").focus()
 
     def action_refresh(self) -> None:
+        self.query_one("#search-input").value = ""
         self.refresh_cache()
 
     def action_delete_model(self) -> None:
         table = self.query_one(DataTable)
         if table.cursor_row is not None:
-            repo_id = table.get_row_at(table.cursor_row)[0]
+            row_key, _ = table.get_row_key_at(table.cursor_row)
+            repo_id = str(row_key.value)
+            
             hf_cache = scan_cache_dir()
             target = next((r for r in hf_cache.repos if r.repo_id == repo_id), None)
             
             if target:
                 strategy = hf_cache.delete_revisions(*[rev.commit_hash for rev in target.revisions])
                 strategy.execute()
-                self.notify(f"Deleted {repo_id}")
-                self.refresh_cache()
+                self.notify(f"Nuked {repo_id}", severity="warning")
+                self.refresh_cache(self.query_one("#search-input").value)
 
 # --- CLI COMMANDS ---
+
 @app.command()
 def ui():
     """Launch the interactive TUI dashboard."""
-    ui_app = HuginUI()
-    ui_app.run()
+    HuginUI().run()
 
 @app.command("ls")
 def list_cache(
@@ -133,16 +158,11 @@ def list_cache(
 
     total_size = 0
     count = 0
-
     for repo in repos:
         if filter_str and filter_str.lower() not in repo.repo_id.lower():
             continue
-
-        refs = set()
-        for revision in repo.revisions:
-            refs.update(revision.refs)
+        refs = {ref for rev in repo.revisions for ref in rev.refs}
         ref_str = ", ".join(refs) if refs else "detached"
-        
         table.add_row(repo.repo_id, repo.repo_type, ref_str, get_size_str(repo.size_on_disk))
         total_size += repo.size_on_disk
         count += 1
@@ -152,7 +172,7 @@ def list_cache(
 
 @app.command("pull")
 def pull_model(
-    repo_id: str = typer.Argument(..., help="Repo ID"),
+    repo_id: str = typer.Argument(..., help="Repo ID (e.g. black-forest-labs/FLUX.1-dev)"),
     include: str = typer.Option(None, "--include", "-i", help="Glob pattern"),
     revision: str = typer.Option(None, "--rev", "-r", help="Specific branch/tag"),
 ):
@@ -169,10 +189,9 @@ def nuke_model(
     target: str = typer.Argument(..., help="Repo ID to delete"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ):
-    """Permanently delete a model from cache."""
+    """Permanently delete a model from cache via terminal."""
     hf_cache = scan_cache_dir()
     target_repo = next((r for r in hf_cache.repos if r.repo_id == target), None)
-    
     if not target_repo:
         console.print(f"[red]❌ Target '{target}' not found in cache.[/red]")
         return
@@ -186,12 +205,30 @@ def nuke_model(
     console.print(f"[bold green]🗑️  Nuked {target_repo.repo_id}[/bold green]")
 
 @app.command("clean")
-def clean_cache():
-    """Clean dangling items (partial downloads/temp files)."""
-    console.print("[yellow]Scanning for dangling items...[/yellow]")
+def clean_cache(
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation")
+):
+    """Clean interrupted downloads and outdated revisions with no refs."""
+    console.print("[yellow]Scanning for dangling revisions...[/yellow]")
     hf_cache = scan_cache_dir()
-    # Official recommendation for cleaning is typically checking for revisions without refs
-    console.print("[green]Cache scan complete. Use 'ls' or 'ui' to manage large models.[/green]")
+    
+    to_delete = []
+    for repo in hf_cache.repos:
+        for rev in repo.revisions:
+            if not rev.refs:
+                to_delete.append(rev.commit_hash)
+    
+    if not to_delete:
+        console.print("[green]✅ No dangling items found.[/green]")
+        return
+
+    if not force:
+        if not Confirm.ask(f"Found {len(to_delete)} detached revisions. Clean them?"):
+            return
+
+    strategy = hf_cache.delete_revisions(*to_delete)
+    strategy.execute()
+    console.print(f"[bold green]🧹 Cleanup complete![/bold green]")
 
 @app.command("files")
 def list_files(
