@@ -12,7 +12,6 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskID
-from rich.text import Text
 
 console = Console()
 
@@ -35,42 +34,24 @@ def get_tool_dirs() -> list[Path]:
     return sorted(tools)
 
 def setup_venv(tool_dir: Path, progress: Progress, task: TaskID) -> Path:
-    """Create or reuse venv for a tool."""
+    """Create or update venv for a tool, ensuring all requirements are met."""
     venv_dir = tool_dir / "venv"
     python_exe = venv_dir / "bin" / "python"
     requirements_file = tool_dir / "requirements.txt"
 
-    # Check if venv exists and is functional
-    if venv_dir.exists() and python_exe.exists():
-        try:
-            # Test if python works
-            run_command([str(python_exe), "--version"], cwd=tool_dir)
-            # Check if key packages are installed (check typer as proxy)
-            result = run_command([str(python_exe), "-c", "import typer"], cwd=tool_dir, check=False)
-            if result.returncode == 0:
-                progress.update(task, description=f"✅ Reusing existing venv for {tool_dir.name}...")
-                return python_exe
-        except:
-            pass  # Fall through to recreation
+    # 1. Create venv if missing
+    if not venv_dir.exists() or not python_exe.exists():
+        progress.update(task, description=f"🐍 Creating venv for {tool_dir.name}...")
+        run_command([sys.executable, "-m", "venv", str(venv_dir)], cwd=tool_dir)
 
-    # Remove broken/old venv
-    if venv_dir.exists():
-        progress.update(task, description=f"🗑️  Removing old venv for {tool_dir.name}...")
-        shutil.rmtree(venv_dir)
-
-    # Create new venv
-    progress.update(task, description=f"🐍 Creating venv for {tool_dir.name}...")
-    run_command([sys.executable, "-m", "venv", str(venv_dir)], cwd=tool_dir)
-
-    if not python_exe.exists():
-        raise FileNotFoundError(f"Python executable not found in {venv_dir}")
-
-    # Upgrade pip
-    progress.update(task, description=f"⬆️  Upgrading pip for {tool_dir.name}...")
+    # 2. Sync Dependencies
+    # We remove the "check if typer exists" shortcut to ensure new deps like 'textual' are caught.
+    progress.update(task, description=f"📦 Syncing deps for {tool_dir.name}...")
+    
+    # Upgrade pip first
     run_command([str(python_exe), "-m", "pip", "install", "--upgrade", "pip"], cwd=tool_dir)
-
-    # Install requirements
-    progress.update(task, description=f"📦 Installing deps for {tool_dir.name}...")
+    
+    # Install/Update requirements
     run_command([str(python_exe), "-m", "pip", "install", "-r", str(requirements_file)], cwd=tool_dir)
 
     return python_exe
@@ -78,10 +59,6 @@ def setup_venv(tool_dir: Path, progress: Progress, task: TaskID) -> Path:
 def create_wrapper_script(tool_name: str, main_py: Path, python_exe: Path):
     """Create a wrapper script that runs the tool with its venv python."""
     script_path = Path("/usr/local/bin") / tool_name
-
-    # Check if we can write to /usr/local/bin
-    if not os.access("/usr/local/bin", os.W_OK):
-        raise PermissionError(f"No write permission for /usr/local/bin. Run installer with sudo.")
 
     # Remove existing script/symlink
     if script_path.exists():
@@ -96,7 +73,12 @@ exec "{python_exe}" "{main_py}" "$@"
     console.print(f"🔗 Created wrapper script: {script_path}")
 
 def main():
-    console.print(Panel.fit("🚀 [bold blue]AI Tools Universal Installer[/bold blue]\nSetting up isolated environments for all tools", style="blue"))
+    # Immediate check for Sudo
+    if os.geteuid() != 0:
+        console.print(Panel("[bold red]Permission Denied[/bold red]\nThis script must be run with [bold]sudo[/bold] to modify /usr/local/bin", style="red"))
+        sys.exit(1)
+
+    console.print(Panel.fit("🚀 [bold blue]AI Tools Universal Installer[/bold blue]\nEnsuring isolated environments are fully synced", style="blue"))
 
     tools = get_tool_dirs()
     if not tools:
@@ -116,20 +98,20 @@ def main():
         overall_task = progress.add_task("Overall Progress", total=len(tools))
 
         for tool_dir in tools:
-            tool_task = progress.add_task(f"Setting up {tool_dir.name}", total=2)
+            tool_task = progress.add_task(f"Processing {tool_dir.name}", total=2)
 
             try:
-                # 1. Setup venv
+                # 1. Setup/Update venv
                 python_exe = setup_venv(tool_dir, progress, tool_task)
                 progress.update(tool_task, advance=1)
 
-                # 2. Create wrapper script
-                progress.update(tool_task, description=f"🔧 Creating wrapper script for {tool_dir.name}...")
+                # 2. Create/Update wrapper script
+                progress.update(tool_task, description=f"🔧 Updating wrapper for {tool_dir.name}...")
                 main_py = tool_dir / "main.py"
                 create_wrapper_script(tool_dir.name, main_py, python_exe)
                 progress.update(tool_task, advance=1)
 
-                console.print(f"[green]✅ {tool_dir.name} setup complete![/green]")
+                console.print(f"[green]✅ {tool_dir.name} is ready![/green]")
 
             except Exception as e:
                 console.print(f"[red]❌ Failed to setup {tool_dir.name}: {e}[/red]")
@@ -137,7 +119,7 @@ def main():
 
             progress.update(overall_task, advance=1)
 
-    console.print(Panel.fit("🎉 [bold green]Installation Complete![/bold green]\nAll tools are now available globally.\nRun 'tool_name --help' to get started.", style="green"))
+    console.print(Panel.fit("🎉 [bold green]Sync Complete![/bold green]\nAll tools are now updated and available globally.", style="green"))
 
 if __name__ == "__main__":
     main()

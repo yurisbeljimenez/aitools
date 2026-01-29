@@ -69,14 +69,20 @@ chmod +x install_all.sh
 
 ### 🦅 `hugin` (Hugging Face Manager)
 
-**Purpose:** Manage your local Hugging Face cache.
+**Purpose:** Comprehensive Hugging Face cache and repository management.
 
-- **Key Features:** Turbo downloads (Rust-based), cache visualization, and safe deletion.
+- **Key Features:** Turbo downloads (Rust-based), cache visualization, safe deletion, cache cleaning, and Hugging Face API integration.
 - **Commands:**
-- `hugin ls`: Dashboard of downloaded models.
-- `hugin pull <repo_id>`: Accelerated download.
-- `hugin nuke <repo_id>`: Delete a model to free space.
-- `hugin space`: Disk usage report.
+- `hugin ls`: Dashboard of downloaded models with sorting and filtering.
+- `hugin pull <repo_id>`: Accelerated download with glob patterns and revision support.
+- `hugin nuke <repo_id>`: Delete a model to free space (supports fuzzy matching).
+- `hugin space`: Disk usage report for system and Hugging Face cache.
+- `hugin clean`: Clean hanging/dangling items from cache (dangling files and refs).
+- `hugin deep-clean`: Deep clean cache by removing old revisions and unused files.
+- `hugin files <repo_id>`: List files in a repository with sizes.
+- `hugin download <repo_id> <filename>`: Download specific files from repositories.
+- `hugin user`: Show current Hugging Face user information.
+- `hugin repos`: List user's repositories with filtering by type.
 
 ### 🤖 `aicap` (Dataset Captioner)
 
