@@ -122,6 +122,16 @@ chmod +x install_all.sh
 - `copycat <URL>`: Download video to current folder.
 - `copycat <URL> --browser firefox`: Use Firefox cookies.
 
+### 📸 `instabot` (Instagram Ingestor)
+
+**Purpose:** Download images from Instagram profiles using browser session authentication.
+
+- **Key Features:** Browser cookie authentication, automatic retry on rate limits (429), Instaloader built-in skip-existing and rate limiting.
+- **Usage:**
+- `instabot <handler>`: Download all images from profile.
+- `instabot <handler> --browser firefox`: Use Firefox cookies.
+- `instabot <handler> --limit 10`: Download only first 10 posts.
+
 ---
 
 ## 📂 Directory Structure
@@ -142,7 +152,10 @@ chmod +x install_all.sh
 │   └── requirements.txt    # Dependencies (psutil)
 ├── ostris/
 │   ├── main.py
-│   └── requirements.py     # Dependencies (psutil)
+│   └── requirements.txt    # Dependencies (psutil)
+├── instabot/
+│   ├── main.py
+│   └── requirements.txt    # Dependencies (instaloader, browser-cookie3)
 └── copycat/
     ├── main.py
     └── requirements.txt    # Dependencies (yt-dlp)
