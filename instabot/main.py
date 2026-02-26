@@ -155,7 +155,7 @@ def ingest(
                             
                             md = f"# Image Metadata\n- Source: https://www.instagram.com/p/{post.shortcode}/\n"
                             md += f"- Date: {datetime.now()}\n- Path: {fpath}\n\n## Details\n"
-                            md += f"```text\nUploader: {profile.username}\nDate: {post.date_local}\nLikes: {post.likes}\n```\n"
+                            md += f"```text\nUploader: {profile.username}\nDate: {post.date_local}\nLikes: {post.likes}\nResolution: {post.width}x{post.height}\n```\n"
                             md += f"\n## Caption\n> {capt}\n"
                             
                             mpath.write_text(md, encoding='utf-8')
