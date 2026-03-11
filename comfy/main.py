@@ -11,15 +11,25 @@ from rich.console import Console
 from rich.panel import Panel
 
 # --- CONFIGURATION ---
-# Points strictly to ~/ComfyUI as requested
 INSTALL_DIR = Path.home() / "ComfyUI"
 PID_FILE = Path("/tmp/comfyui.pid")
 LOG_FILE = Path("/tmp/comfyui.log")
 PORT = 9000
 HOST = "0.0.0.0"
 
-app = typer.Typer(help="ComfyUI Process Manager", no_args_is_help=True)
 console = Console()
+
+def version_callback(value: bool):
+    """Display version information."""
+    if value:
+        console.print("[bold cyan]comfy v1.0 - ComfyUI Process Manager[/bold cyan]")
+        raise typer.Exit()
+
+app = typer.Typer(help="ComfyUI Process Manager", no_args_is_help=True, rich_markup_mode="rich")
+
+@app.callback()
+def callback(version: bool = typer.Option(False, "--version", "-v", callback=version_callback, help="Show version")):
+    pass
 
 def get_running_pid():
     """Reads PID file and verifies the process actually exists."""

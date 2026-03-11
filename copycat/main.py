@@ -1,23 +1,35 @@
 #!/usr/bin/env python3
-import os
-import sys
 import re
-import json
-import subprocess
-import typer
+import sys
 from pathlib import Path
 from datetime import datetime
+
+import typer
+import yt_dlp
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
-import yt_dlp
 
-app = typer.Typer(help="Copycat: Social Media Ingestor for AI Reference", no_args_is_help=True)
+
+def version_callback(value: bool):
+    """Display version information."""
+    if value:
+        console.print("[bold cyan]copycat v1.0 - Social Media Ingestor for AI Reference[/bold cyan]")
+        raise typer.Exit()
+
+
+app = typer.Typer(help="Copycat: Social Media Ingestor for AI Reference", no_args_is_help=True, rich_markup_mode="rich")
+
+@app.callback()
+def callback(version: bool = typer.Option(False, "--version", "-v", callback=version_callback, help="Show version")):
+    pass
+
+
 console = Console()
 
 # Get the yt-dlp executable from the same venv
 venv_bin = Path(sys.executable).parent
 yt_dlp_exe = venv_bin / 'yt-dlp'
+
 
 def sanitize_filename(name: str, max_len: int = 50) -> str:
     """Replicates your sed 's/[^a-zA-Z0-9]/_/g' logic."""
@@ -29,6 +41,13 @@ def sanitize_filename(name: str, max_len: int = 50) -> str:
     clean = clean.strip('_')
     return clean[:max_len]
 
+
+def _print_progress(d: dict):
+    """Helper for yt_dlp progress callback."""
+    if d['status'] == 'downloading':
+        pass  # Rich handles progress via status context manager
+
+
 @app.command()
 def ingest(
     url: str = typer.Argument(..., help="Video URL (YouTube, TikTok, Instagram, etc)"),
@@ -38,6 +57,9 @@ def ingest(
 ):
     """
     Download video reference and generate AI-ready metadata.
+    
+    Uses yt_dlp for efficient single-call metadata extraction and download.
+    Supports YouTube, TikTok, Instagram, and 1000+ other sites.
     """
     if not output.exists():
         output.mkdir(parents=True, exist_ok=True)
@@ -47,66 +69,65 @@ def ingest(
     console.print(Panel(f"🐱 [bold purple]Copycat Ingest[/bold purple]\nURL: [dim]{url}[/dim]\nDest: [blue]{output}[/blue]", style="purple"))
 
     try:
-        # 1. Get uploader (like the bash script)
-        with console.status("[bold purple]🔍 Fetching metadata...[/bold purple]"):
-            uploader_result = subprocess.run([
-                str(yt_dlp_exe), '--print', 'uploader', '--ignore-errors',
-                '--no-warnings', '--age-limit', '0', '--geo-bypass', url
-            ], capture_output=True, text=True)
-
-            if uploader_result.returncode == 0 and uploader_result.stdout.strip():
-                raw_uploader = uploader_result.stdout.strip().split('\n')[0]
-            else:
-                raw_uploader = 'unknown_user'
-
-        # 2. Construct Custom Filename
-        clean_uploader = sanitize_filename(raw_uploader)
+        # Use yt_dlp's extract_info() for efficient metadata extraction (single call vs multiple subprocesses)
+        with console.status("[bold purple]🔍 Fetching video metadata...[/bold purple]"):
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+            }
+            
+            # First pass: extract all metadata without downloading
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            
+            uploader = info.get('uploader') or 'unknown_user'
+            title = info.get('title', 'N/A')
+            upload_date = info.get('upload_date', 'N/A')
+            duration = info.get('duration', 0)
+            duration_string = str(duration) if duration else 'N/A'
+            description = info.get('description') or ''
+            
+            # Extract resolution from format if available
+            formats = info.get('formats', [])
+            width, height = 0, 0
+            for fmt in formats:
+                w = fmt.get('width') or fmt.get('w')
+                h = fmt.get('height') or fmt.get('h')
+                if w and h:
+                    width, height = w, h
+                    break
+            
+        # Construct filename from metadata
+        clean_uploader = sanitize_filename(uploader)
         final_filename = f"{timestamp}_{clean_uploader}.mp4"
         final_path = output / final_filename
         meta_path = output / f"{timestamp}_{clean_uploader}_meta.md"
 
-        # 3. Download
+        # Download video
         console.print(f"[cyan]⬇️  Downloading: {final_filename}[/cyan]")
-        download_result = subprocess.run([
-            str(yt_dlp_exe),
-            '--cookies-from-browser', browser,
-            '--ignore-errors',
-            '--no-warnings',
-            '--progress',
-            '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            '--merge-output-format', 'mp4',
-            '-o', str(final_path),
-            '--restrict-filenames',
-            '--age-limit', '0',
-            '--geo-bypass',
-            url
-        ], capture_output=True, text=True)
-
-        if download_result.returncode != 0:
-            console.print(f"[bold red]❌ Download failed:[/bold red] {download_result.stderr}")
-            sys.exit(1)
+        download_opts = {
+            'cookiesfrombrowser': browser,
+            'ignoreerrors': True,
+            'nowarnings': True,
+            'progress_hooks': [_print_progress],
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'mergeoutputformat': 'mp4',
+            'outtmpl': str(final_path),
+            'restrictfilenames': True,
+            'age_limit': 0,
+            'geo_bypass': True,
+        }
+        
+        with yt_dlp.YoutubeDL(download_opts) as ydl:
+            ydl.download([url])
 
         if not final_path.exists():
             console.print("[bold red]❌ Download failed: File not created[/bold red]")
             sys.exit(1)
 
-        # 4. Get metadata for markdown
-        info = {}
-        meta_fields = ['title', 'uploader', 'upload_date', 'duration_string', 'description']
-        for field in meta_fields:
-            if field == 'description':
-                result = subprocess.run([str(yt_dlp_exe), '--get-description', '--ignore-errors', '--no-warnings', url],
-                                      capture_output=True, text=True)
-                info[field] = result.stdout.strip() if result.returncode == 0 else ''
-            else:
-                result = subprocess.run([str(yt_dlp_exe), '--print', f'%({field})s', '--ignore-errors', '--no-warnings', url],
-                                      capture_output=True, text=True)
-                info[field] = result.stdout.strip() if result.returncode == 0 else 'N/A'
-
-        # 5. Generate Markdown
+        # Generate Markdown metadata file
         if write_meta:
-            description = info.get('description', '')
-            # Indent description for blockquote
             desc_formatted = "\n> ".join(description.splitlines()) if description else "No description."
 
             md_content = f"""# Video Metadata
@@ -116,11 +137,11 @@ def ingest(
 
 ## Details
 ```text
-Title: {info.get('title', 'N/A')}
-Uploader: {info.get('uploader', 'N/A')}
-Upload Date: {info.get('upload_date', 'N/A')}
-Duration: {info.get('duration_string', 'N/A')}
-Resolution: {info.get('width', 0)}x{info.get('height', 0)}
+Title: {title}
+Uploader: {uploader}
+Upload Date: {upload_date}
+Duration: {duration_string}
+Resolution: {width}x{height}
 ```
 
 ## Description
@@ -135,6 +156,7 @@ Resolution: {info.get('width', 0)}x{info.get('height', 0)}
     except Exception as e:
         console.print(f"[bold red]❌ Unexpected Error:[/bold red] {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     app()

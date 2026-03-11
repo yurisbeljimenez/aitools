@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import os
+import re
 import sys
 import torch
-import typer
-import re
 from pathlib import Path
+
+import typer
 from PIL import Image
 from rich.console import Console
 from rich.panel import Panel
@@ -16,7 +17,18 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 MODEL_ID = "microsoft/Florence-2-large"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-app = typer.Typer(help="aicap v3.5: Zero-Noise Production Tool", no_args_is_help=True)
+def version_callback(value: bool):
+    """Display version information."""
+    if value:
+        console.print("[bold cyan]aicap v3.5 - Zero-Noise Dataset Captioner[/bold cyan]")
+        raise typer.Exit()
+
+app = typer.Typer(help="aicap v3.5: Zero-Noise Production Tool", no_args_is_help=True, rich_markup_mode="rich")
+
+@app.callback()
+def callback(version: bool = typer.Option(False, "--version", "-v", callback=version_callback, help="Show version")):
+    pass
+
 console = Console()
 
 def load_model():
@@ -48,7 +60,7 @@ def run(
     3. Remove 'wavy hair... styled in waves' redundancy.
     """
     console.print(Panel(
-        f"🚀 [bold]aicap v3.5[/bold] | 🔑 [green]{trigger}[/green] | 🛠️  [yellow]{mapping or 'Raw'}[/yellow]", 
+        f"🚀 aicap v3.5 | 🔑 [green]{trigger}[/green] | 🛠️  [yellow]{mapping or 'Raw'}[/yellow]", 
         title="FLUX.2 Production Suite"
     ))
 
@@ -78,7 +90,12 @@ def run(
             input_dict = {"input_ids": inputs["input_ids"].to(DEVICE), "pixel_values": inputs["pixel_values"].to(DEVICE, torch.float16)}
             
             with torch.no_grad():
-                generated_ids = model.generate(**input_dict, max_new_tokens=1024, num_beams=3)
+                generated_ids = model.generate(
+                    **input_dict, 
+                    max_new_tokens=1024, 
+                    num_beams=3,
+                    timeout=60  # Prevent hangs on large/complex images
+                )
             
             generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
             description = processor.post_process_generation(generated_text, task=task, image_size=raw_image.size)[task]

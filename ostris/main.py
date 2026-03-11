@@ -6,6 +6,7 @@ import subprocess
 import typer
 import psutil
 from pathlib import Path
+from datetime import datetime
 from rich.console import Console
 from rich.panel import Panel
 
@@ -34,6 +35,7 @@ def get_port_process(port):
 @app.command()
 def start(
     detach: bool = typer.Option(True, "--detach/--foreground", "-d", help="Run in background"),
+    force_port: bool = typer.Option(False, "--force-port", help="Force port configuration via package.json modification (requires backup)"),
 ):
     """Start the AI Toolkit Web UI."""
     # 1. Pre-Flight Check (Port Collision)
@@ -56,15 +58,37 @@ def start(
         console.print(f"[red]❌ Error: AI Toolkit UI not found at {UI_DIR}[/red]")
         raise typer.Exit(1)
 
-    # 3. Patch package.json (Future Proofing)
-    pkg_json = UI_DIR / "package.json"
-    if pkg_json.exists():
-        content = pkg_json.read_text()
-        # Check if we need to patch the port
-        if "next start --port 8675" in content:
-            console.print(f"[cyan]🔧 Patching package.json to force Port {PORT}...[/cyan]")
-            content = content.replace("next start --port 8675", f"next start --port {PORT}")
-            pkg_json.write_text(content)
+    # 3. Optional: Force port configuration (opt-in via --force-port flag)
+    if force_port:
+        pkg_json = UI_DIR / "package.json"
+        if pkg_json.exists():
+            content = pkg_json.read_text()
+            original_content = content
+            
+            # Backup before modifying
+            backup_path = Path(str(pkg_json) + f".backup.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+            
+            # Check if we need to patch the port
+            if "next start --port 8675" in content:
+                console.print(f"[cyan]🔧 Patching package.json to force Port {PORT}...[/cyan]")
+                content = content.replace("next start --port 8675", f"next start --port {PORT}")
+                
+                # Write modified content and save backup
+                pkg_json.write_text(content)
+                Path(backup_path).write_text(original_content, encoding='utf-8')
+                console.print(f"[green]✅ Backed up to {backup_path.name} and patched package.json[/green]")
+            else:
+                console.print(f"[yellow]⚠️  No port patch needed - already configured or using different setup[/yellow]")
+        else:
+            console.print(f"[bold red]❌ Error: package.json not found at {pkg_json}[/bold red]")
+            raise typer.Exit(1)
+    else:
+        # Still allow non-destructive check without modifying
+        pkg_json = UI_DIR / "package.json"
+        if pkg_json.exists():
+            content = pkg_json.read_text()
+            if "next start --port 8675" in content:
+                console.print(f"[dim]ℹ️  package.json detected with legacy port config (8675). Use --force-port to update.[/dim]")
 
     console.print(Panel(f"🚀 Launching Ostris AI-Toolkit\nPath: [dim]{TOOLKIT_DIR}[/dim]\nPort: [bold cyan]{PORT}[/bold cyan]", style="blue"))
 

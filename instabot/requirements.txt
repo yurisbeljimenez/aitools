@@ -2,6 +2,3 @@ typer
 rich
 instaloader
 browser-cookie3
-requests
-keyring
-secretstorage

@@ -18,11 +18,23 @@ from textual.binding import Binding
 # Optimized for your hardware (AMD Ryzen 9 9950X3D + Gen5 SSD)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
+def version_callback(value: bool):
+    """Display version information."""
+    if value:
+        console.print("[bold cyan]Hugin v1.0 - High-Speed Hugging Face Scout & Cache Manager[/bold cyan]")
+        raise typer.Exit()
+
 app = typer.Typer(
     help="Hugin: The High-Speed Hugging Face Scout & Cache Manager.",
     no_args_is_help=True,
-    add_completion=False
+    add_completion=False,
+    rich_markup_mode="rich"
 )
+
+@app.callback()
+def callback(version: bool = typer.Option(False, "--version", "-v", callback=version_callback, help="Show version")):
+    pass
+
 console = Console()
 
 # --- SHARED UTILITIES ---
