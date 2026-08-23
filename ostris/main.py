@@ -35,7 +35,7 @@ def get_port_process(port):
 @app.command()
 def start(
     detach: bool = typer.Option(True, "--detach/--foreground", "-d", help="Run in background"),
-    force_port: bool = typer.Option(False, "--force-port", help="Force port configuration via package.json modification (requires backup)"),
+    force_port: bool = typer.Option(True, "--force-port/--no-force-port", help="Pin the toolkit to the shared port (9000) by patching package.json (auto-backup). ON by default for the GPU lock."),
 ):
     """Start the AI Toolkit Web UI."""
     # 1. Pre-Flight Check (Port Collision)
@@ -58,37 +58,28 @@ def start(
         console.print(f"[red]❌ Error: AI Toolkit UI not found at {UI_DIR}[/red]")
         raise typer.Exit(1)
 
-    # 3. Optional: Force port configuration (opt-in via --force-port flag)
-    if force_port:
-        pkg_json = UI_DIR / "package.json"
-        if pkg_json.exists():
-            content = pkg_json.read_text()
+    # 3. Enforce the shared port (9000) in the toolkit's start script.
+    #    Upstream defaults to 8675 ("fileServer.js start --port 8675"); we pin it
+    #    to 9000 so the shared-port GPU lock with comfy holds. Idempotent + auto-backup.
+    pkg_json = UI_DIR / "package.json"
+    if not pkg_json.exists():
+        console.print(f"[bold red]❌ Error: package.json not found at {pkg_json}[/bold red]")
+        raise typer.Exit(1)
+
+    content = pkg_json.read_text()
+    legacy_marker = "--port 8675"
+    if legacy_marker in content:
+        if force_port:
             original_content = content
-            
-            # Backup before modifying
             backup_path = Path(str(pkg_json) + f".backup.{datetime.now().strftime('%Y%m%d%H%M%S')}")
-            
-            # Check if we need to patch the port
-            if "next start --port 8675" in content:
-                console.print(f"[cyan]🔧 Patching package.json to force Port {PORT}...[/cyan]")
-                content = content.replace("next start --port 8675", f"next start --port {PORT}")
-                
-                # Write modified content and save backup
-                pkg_json.write_text(content)
-                Path(backup_path).write_text(original_content, encoding='utf-8')
-                console.print(f"[green]✅ Backed up to {backup_path.name} and patched package.json[/green]")
-            else:
-                console.print(f"[yellow]⚠️  No port patch needed - already configured or using different setup[/yellow]")
+            console.print(f"[cyan]🔧 Patching package.json: {legacy_marker} → --port {PORT}[/cyan]")
+            content = content.replace(legacy_marker, f"--port {PORT}")
+            pkg_json.write_text(content)
+            backup_path.write_text(original_content, encoding="utf-8")
+            console.print(f"[green]✅ Backed up to {backup_path.name} and pinned Port {PORT}[/green]")
         else:
-            console.print(f"[bold red]❌ Error: package.json not found at {pkg_json}[/bold red]")
-            raise typer.Exit(1)
-    else:
-        # Still allow non-destructive check without modifying
-        pkg_json = UI_DIR / "package.json"
-        if pkg_json.exists():
-            content = pkg_json.read_text()
-            if "next start --port 8675" in content:
-                console.print(f"[dim]ℹ️  package.json detected with legacy port config (8675). Use --force-port to update.[/dim]")
+            console.print(f"[yellow]⚠️  package.json still uses port 8675 (re-run with --force-port to pin {PORT}).[/yellow]")
+    # else: already on our port (or a custom one) — nothing to do.
 
     console.print(Panel(f"🚀 Launching Ostris AI-Toolkit\nPath: [dim]{TOOLKIT_DIR}[/dim]\nPort: [bold cyan]{PORT}[/bold cyan]", style="blue"))
 
@@ -108,8 +99,8 @@ def start(
         PID_FILE.write_text(str(proc.pid))
         
         # 5. Wait for Ready State (The Health Check)
-        with console.status(f"[bold green]⏳ Waiting for UI on port {PORT}...[/bold green]", spinner="dots"):
-            max_retries = 60
+        with console.status(f"[bold green]⏳ Waiting for UI on port {PORT} (build can take a bit)...[/bold green]", spinner="dots"):
+            max_retries = 180
             for _ in range(max_retries):
                 check = get_port_process(PORT)
                 if check:
