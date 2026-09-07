@@ -60,6 +60,9 @@ def ingest(
     
     Uses yt_dlp for efficient single-call metadata extraction and download.
     Supports YouTube, TikTok, Instagram, and 1000+ other sites.
+    
+    ⚠️  PRIVACY NOTE: Cookie theft is used for authenticated content access only.
+    No cookies are stored or transmitted beyond the yt-dlp download process.
     """
     if not output.exists():
         output.mkdir(parents=True, exist_ok=True)

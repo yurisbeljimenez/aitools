@@ -2,17 +2,16 @@
 import sys
 import subprocess
 import os
+import time  # Added for retry logic
 
 from rich.console import Console
 from rich.panel import Panel
-
 
 def version_callback(value: bool):
     """Display version information."""
     if value:
         console.print("[bold cyan]instabot v1.0 - Simple Instaloader Wrapper[/bold cyan]")
         raise typer.Exit()
-
 
 console = Console()
 
@@ -28,7 +27,6 @@ app = typer.Typer(
 def callback(version: bool = typer.Option(False, "--version", "-v", callback=version_callback, help="Show version")):
     pass
 
-
 def main(
     handler: str = typer.Argument(..., help="Instagram User Handler (without @)")
 ):
@@ -39,7 +37,7 @@ def main(
 
     This matches your macOS script behavior exactly:
     --load-cookies chrome --no-videos --fast-update --no-captions --no-metadata-json --no-compress-json
-    
+
     Simply calls the installed instaloader CLI with identical arguments.
     """
     console.print(Panel(f"📸 [bold]instabot[/bold]\nTarget: @{handler}", style="purple"))
@@ -58,12 +56,30 @@ def main(
 
     console.print(f"[dim]Running: {' '.join(cmd)}[/dim]\n")
 
-    try:
-        subprocess.run(cmd, check=True)
-    except Exception as e:
-        console.print(f"[bold red]Error: {e}[/bold red]")
+    # Retry logic with exponential backoff for rate limits and errors
+    max_retries = 3
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            subprocess.run(cmd, check=True)
+            return
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 429:  # Rate limit error
+                wait_time = min(2 ** retry_count * 5, 60)  # Cap at 60 seconds
+                console.print(f"[yellow]⚠️  Rate limited (HTTP 429). Retrying in {wait_time} seconds... (Attempt {retry_count + 1}/{max_retries})[/yellow]")
+                time.sleep(wait_time)
+            else:
+                console.print(f"[bold red]Error: {e}[/bold red]")
+                break
+        except Exception as e:
+            console.print(f"[bold red]Unexpected Error: {e}[/bold red]")
+            break
+        
+        retry_count += 1
+    
+    if retry_count >= max_retries:
+        console.print(f"[bold red]Failed after {max_retries} attempts.[/bold red]")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     typer.run(main)

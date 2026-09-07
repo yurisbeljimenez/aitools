@@ -101,6 +101,7 @@ def start(
         # 5. Wait for Ready State (The Health Check)
         with console.status(f"[bold green]⏳ Waiting for UI on port {PORT} (build can take a bit)...[/bold green]", spinner="dots"):
             max_retries = 180
+            attempts = 0
             for _ in range(max_retries):
                 check = get_port_process(PORT)
                 if check:
@@ -112,6 +113,11 @@ def start(
                         console.print(f"[red]❌ Error: Port hijacked by {check.name()}![/red]")
                         proc.kill()
                         raise typer.Exit(1)
+                
+                attempts += 1
+                if attempts >= max_retries:
+                    break
+                
                 time.sleep(1)
         
         console.print(f"[red]⚠️  Timed out waiting for port {PORT}. Check logs: {LOG_FILE}[/red]")

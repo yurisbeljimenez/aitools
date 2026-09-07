@@ -137,8 +137,7 @@ def run(
                 r"^In this image, ",
                 r"^Captured in this shot is ",
                 r"^[Tt]he image depicts ",
-                # New: Kill the mood sentences at the end
-                r"The overall mood of the image is [a-zA-Z\s]+\.$",
+                # Single pattern for mood sentences
                 r"The overall mood of the image is [a-zA-Z\s]+\."
             ]
             for pat in noise_patterns:
