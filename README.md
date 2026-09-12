@@ -124,13 +124,15 @@ chmod +x install_all.sh
 
 ### 📸 `instabot` (Instagram Ingestor)
 
-**Purpose:** Download images from Instagram profiles using browser session authentication.
+**Purpose:** Download an Instagram **profile**, or a **single Reel/post URL**, using your browser session.
 
-- **Key Features:** Browser cookie authentication, automatic retry on rate limits (429), Instaloader built-in skip-existing and rate limiting.
+- **Key Features:** Browser session authentication (looks like a human, not a bot), Reel/post URL support, **anti-flagging** design — no wrapper retry loop, so a rate limit *aborts* the run instead of hammering the API (protects the account), clean resume on re-run via `--fast-update`, downloads to the current folder by default.
 - **Usage:**
-- `instabot <handler>`: Download all images from profile.
+- `instabot <handler>`: Download a profile's photo archive to `./<handler>/`.
+- `instabot https://www.instagram.com/reel/<code>/`: Download a single Reel/post to the current folder.
 - `instabot <handler> --browser firefox`: Use Firefox cookies.
-- `instabot <handler> --limit 10`: Download only first 10 posts.
+- `instabot <handler> --limit 10`: Download only the first 10 posts.
+- `instabot <handler> --print-cmd`: Print the exact instaloader command without running it.
 
 ---
 
@@ -181,34 +183,17 @@ for _ in range(max_retries):
 ```
 **Impact:** Prevents infinite loops, improves reliability during server startup
 
-#### 3. instabot - Retry Logic with Exponential Backoff ✅
+#### 3. instabot - Anti-Flagging Design (retry loop REMOVED) ✅
 **File:** `instabot/main.py`  
-**Changes:**
-- Added `import time` for sleep functionality
-- Implemented retry loop with exponential backoff
-- Specific handling for HTTP 429 (rate limit) errors
-- Maximum retry limit to prevent infinite retries
-
+**Issue:** A wrapper-level retry loop with exponential backoff was exactly the behaviour that gets an account flagged by Instagram — re-hitting the API on a 429 is the opposite of what a human does.
+**Fix:** Removed the retry loop entirely. We now lean on instaloader's own conservative knobs so a rate limit **ABORTS** the run instead of retrying, and a later re-run resumes cleanly via `--fast-update`. Single source of truth: the official `instaloader`.
 ```python
-# New retry logic:
-max_retries = 3
-retry_count = 0
-while retry_count < max_retries:
-    try:
-        subprocess.run(cmd, check=True)
-        return
-    except subprocess.CalledProcessError as e:
-        if e.returncode == 429:  # Rate limit error
-            wait_time = min(2 ** retry_count * 5, 60)  # Exponential backoff
-            console.print(f"[yellow]⚠️  Rate limited (HTTP 429). Retrying in {wait_time} seconds...[/yellow]")
-            time.sleep(wait_time)
-        else:
-            console.print(f"[bold red]Error: {e}[/bold red]")
-            break
-    
-    retry_count += 1
+# Anti-bot / "do not re-attempt" flags passed to instaloader:
+"--load-cookies", browser,          # browser session => looks like a human
+"--max-connection-attempts", "1",   # 1 attempt => no connection-level retry
+"--abort-on", "429",                # rate limit ABORTS the run instead of retrying
 ```
-**Impact:** Better handling of rate limits and transient errors, improved user experience
+**Impact:** Protects the account from being flagged; clean, resumable downloads; no duplicated download logic
 
 #### 4. copycat - Privacy Disclaimer Addition ✅
 **File:** `copycat/main.py`  
@@ -226,6 +211,29 @@ No cookies are stored or transmitted beyond the yt-dlp download process.
 ```
 **Impact:** Improved transparency about cookie usage, better user trust
 
+#### 5. ostris - Safe Supervisor Kill (never kills your shell) ✅
+**File:** `ostris/main.py`  
+**Issue:** `ostris stop` climbed the process tree with a substring test `"sh" in name`, which also matched `bash`/`zsh` — so it could **SIGKILL your interactive shell**. The `"npm" in name` branch could never match (npm runs as `node`).
+**Fix:** Replaced it with a precise `is_safe_supervisor()` classifier plus an explicit `NEVER_KILL_NAMES` blocklist (bash, zsh, fish, ksh, tmux, screen, init, …). Only recognized supervisors (npm / concurrently / a plain POSIX `sh`) are killed, and the walk stops at the first non-supervisor.
+```python
+NEVER_KILL_NAMES = {"bash", "zsh", "fish", "ksh", "csh", "tcsh",
+                    "tmux", "screen", "init", "systemd", "login", "sshd"}
+# npm detected via cmdline (it runs as `node`), never via a name substring.
+```
+**Impact:** `ostris stop` is safe to run from any shell; the user's session can no longer be killed by the tool.
+
+#### 6. aicap - Removed Invalid `timeout` Keyword Argument ✅
+**File:** `aicap/main.py`  
+**Issue:** `model.generate(..., timeout=60)` — `timeout` is not a valid `generate()` parameter, so it was either silently swallowed or crashed the model's `forward`. The comment ("Prevent hangs") was misleading: it did nothing.
+**Fix:** Removed the kwarg (and its comment).
+**Impact:** Correct, documented `generate()` call; no spurious crash path.
+
+#### 7. Installer & Tests — User-Agnostic Paths + Honest Failures ✅
+**Files:** `install_all.sh`, `test_improvements.py`  
+**Issue:** The installer used `Path.cwd()` (broke depending on where it was run) and silently reported "🎉 Sync Complete!" even when tools failed; the test suite hardcoded `/home/master` paths.
+**Fix:** Anchor both to `Path(__file__).resolve().parent`; the installer now collects failures, lists them, and exits non-zero on any failure; `os.geteuid()` is guarded for non-POSIX systems.
+**Impact:** Works on any user/machine; a partial failure is now reported as a failure.
+
 ### Testing
 
 A comprehensive test suite (`test_improvements.py`) validates all improvements:
@@ -235,21 +243,22 @@ python3 test_improvements.py
 ```
 
 Tests for:
-- ✅ aicap regex duplicate removal
-- ✅ ostris timeout handling improvement  
-- ✅ instabot retry logic addition
-- ✅ copycat privacy disclaimer presence
+- ✅ aicap — exactly one mood pattern, no invalid `timeout` kwarg
+- ✅ ostris — bounded `start()` timeout handling
+- ✅ ostris — supervisor killer never targets interactive shells
+- ✅ instabot — anti-flagging design (no retry loop; abort-on 429; browser cookies)
+- ✅ copycat — privacy disclaimer presence
 
 ### Impact Assessment
 
 **Criticality Level:** High  
 These fixes address:
-1. **Code correctness** (duplicate patterns)
-2. **Reliability** (timeout handling, retry logic)
-3. **User experience** (rate limit handling, privacy transparency)
-4. **Maintainability** (better error handling patterns)
+1. **Safety** — `ostris stop` no longer risks SIGKILL'ing your interactive shell; `instabot` no longer hammers Instagram (removed retry loop).
+2. **Code correctness** — duplicate regex removed; invalid `timeout=` kwarg removed from `model.generate()`.
+3. **Reliability** — bounded `start()` health-check; clean, resumable `instabot` downloads; honest failure reporting in the installer.
+4. **Maintainability** — user-agnostic paths (no hardcoded `/home/master`); tests run from any working directory.
 
-**No Breaking Changes:** All improvements are backward compatible and do not change the public API of any tool.
+**Compatibility note:** `instabot` now intentionally does *not* auto-retry on rate limits (this is the fix, not a regression); re-run the command later to resume.
 
 ### Future Recommendations
 

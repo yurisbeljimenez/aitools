@@ -91,10 +91,9 @@ def run(
             
             with torch.no_grad():
                 generated_ids = model.generate(
-                    **input_dict, 
-                    max_new_tokens=1024, 
-                    num_beams=3,
-                    timeout=60  # Prevent hangs on large/complex images
+                    **input_dict,
+                    max_new_tokens=1024,
+                    num_beams=3
                 )
             
             generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]

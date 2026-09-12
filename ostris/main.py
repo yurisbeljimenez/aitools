@@ -32,6 +32,52 @@ def get_port_process(port):
                     pass
     return None
 
+# Process names we must NEVER kill: interactive shells, terminal
+# multiplexers, and init/login daemons. Killing any of these would take
+# down the user's session or the whole machine.
+NEVER_KILL_NAMES = {
+    "bash", "zsh", "fish", "ksh", "csh", "tcsh",
+    "tmux", "screen",
+    "init", "systemd", "login", "sshd",
+}
+
+# Exact process names that are safe to treat as our own supervisors
+# (a plain POSIX shell that merely launched the script). Interactive
+# shells are already excluded by NEVER_KILL_NAMES above.
+SAFE_SUPERVISOR_NAMES = {"sh", "dash", "ash"}
+
+def is_safe_supervisor(proc) -> bool:
+    """Precisely detect a supervisor process (npm / concurrently / POSIX sh)
+    that launched our server and should be killed along with it, to prevent
+    auto-restart.
+
+    This deliberately replaces the old, dangerous `'sh' in name` substring
+    test, which also matched `bash`/`zsh` and could SIGKILL the user's
+    interactive shell. It never returns True for interactive shells, tmux,
+    screen, or init. npm is detected via cmdline (it runs as `node`), never
+    via a name substring.
+    """
+    try:
+        name = proc.name().lower()
+    except psutil.NoSuchProcess:
+        return False
+
+    if name in NEVER_KILL_NAMES:
+        return False
+
+    try:
+        cmdline = " ".join(proc.cmdline()).lower()
+    except psutil.NoSuchProcess:
+        cmdline = ""
+
+    if "concurrently" in cmdline or "npm" in cmdline:
+        return True
+
+    if name in SAFE_SUPERVISOR_NAMES:
+        return True
+
+    return False
+
 @app.command()
 def start(
     detach: bool = typer.Option(True, "--detach/--foreground", "-d", help="Run in background"),
@@ -141,15 +187,21 @@ def stop():
     console.print(f"[bold red]🛑 Found process: {target_proc.name()} (PID: {target_proc.pid})[/bold red]")
 
     # RECURSIVE SUPERVISOR KILLER LOGIC
-    # Walk up the tree to find 'npm' or 'concurrently' to stop auto-restarts
+    # Walk UP the process tree and kill only recognized supervisors
+    # (npm / concurrently / a plain POSIX sh) so the server isn't
+    # auto-restarted. We stop at the first non-supervisor and NEVER touch
+    # interactive shells (bash/zsh/...), tmux, screen, or init — the old
+    # `'sh' in name` substring test could SIGKILL the user's shell.
     to_kill = [target_proc]
     try:
         parent = target_proc.parent()
         while parent:
-            name = parent.name()
-            cmdline = " ".join(parent.cmdline())
-            if "npm" in name or "concurrently" in cmdline or "sh" in name:
-                console.print(f"   🔥 Found Supervisor: {name} (PID: {parent.pid})")
+            if is_safe_supervisor(parent):
+                try:
+                    pname = parent.name()
+                except psutil.NoSuchProcess:
+                    pname = "?"
+                console.print(f"   🔥 Found Supervisor: {pname} (PID: {parent.pid})")
                 to_kill.append(parent)
                 parent = parent.parent()
             else:

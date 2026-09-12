@@ -26,7 +26,10 @@ def run_command(cmd: list, cwd: Path = None, check: bool = True) -> subprocess.C
 
 def get_tool_dirs() -> list[Path]:
     """Find all tool directories (those with main.py and requirements.txt)."""
-    current_dir = Path.cwd()
+    # Anchor to THIS script's own directory so the installer works no matter
+    # where it is invoked from. The old Path.cwd() made it depend on the
+    # caller's working directory, which broke the "User Agnostic" rule.
+    current_dir = Path(__file__).resolve().parent
     tools = []
     for item in current_dir.iterdir():
         if item.is_dir() and (item / "main.py").exists() and (item / "requirements.txt").exists():
@@ -73,8 +76,14 @@ exec "{python_exe}" "{main_py}" "$@"
     console.print(f"🔗 Created wrapper script: {script_path}")
 
 def main():
-    # Immediate check for Sudo
-    if os.geteuid() != 0:
+    # Immediate check for Sudo (guard the call: os.geteuid() only exists on
+    # POSIX; on other platforms fall back to the admin username).
+    try:
+        is_root = (os.geteuid() == 0)
+    except AttributeError:
+        is_root = (os.getenv("USERNAME") in ("Administrator", "admin")
+                   or os.getenv("USER") == "root")
+    if not is_root:
         console.print(Panel("[bold red]Permission Denied[/bold red]\nThis script must be run with [bold]sudo[/bold] to modify /usr/local/bin", style="red"))
         sys.exit(1)
 
@@ -97,6 +106,7 @@ def main():
 
         overall_task = progress.add_task("Overall Progress", total=len(tools))
 
+        failures = []
         for tool_dir in tools:
             tool_task = progress.add_task(f"Processing {tool_dir.name}", total=2)
 
@@ -114,10 +124,25 @@ def main():
                 console.print(f"[green]✅ {tool_dir.name} is ready![/green]")
 
             except Exception as e:
+                # Record the failure but keep going so one bad tool
+                # doesn't block the rest.
+                failures.append((tool_dir.name, str(e)))
+                progress.update(tool_task, completed=True)
                 console.print(f"[red]❌ Failed to setup {tool_dir.name}: {e}[/red]")
                 continue
 
             progress.update(overall_task, advance=1)
+
+    # Report REAL results: only claim success when every tool succeeded.
+    if failures:
+        ok_count = len(tools) - len(failures)
+        fail_lines = "\n".join(f"  • [bold]{name}[/bold]: {msg}" for name, msg in failures)
+        console.print(Panel.fit(
+            f"[bold red]Sync finished with {len(failures)} failure(s)[/bold red]\n"
+            f"[green]{ok_count} succeeded[/green], [red]{len(failures)} failed:[/red]\n{fail_lines}",
+            style="red"
+        ))
+        sys.exit(1)
 
     console.print(Panel.fit("🎉 [bold green]Sync Complete![/bold green]\nAll tools are now updated and available globally.", style="green"))
 
